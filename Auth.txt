@@ -8,6 +8,7 @@ var HOJA_USUARIOS_LEGACY = "Usuarios";
 var HEADERS_USUARIOS = [
   "ID",
   "Correo_Electronico",
+  "Clave",
   "Nombre",
   "Rol",
   "Estado",
@@ -24,7 +25,7 @@ var HEADERS_USUARIOS = [
  * @param {string} [providedEmail] Correo opcional enviado desde la vista para verificación
  * @return {Object} Objeto JSON con success, registered, active, email, role y permissions por módulo
  */
-function getCurrentUserRole(providedEmail) {
+function getCurrentUserRole(providedEmail, providedPassword) {
   var defaultNoPerms = {
     Modulo_Dashboard: "No",
     Modulo_POS: "No",
@@ -104,7 +105,8 @@ function getCurrentUserRole(providedEmail) {
     if (lastRow < 2) {
       var initialAdmin = userEmail || activeEmail || effectiveEmail || "admin@fincasauces.com";
       initialAdmin = initialAdmin.trim().toLowerCase();
-      sheet.appendRow(["USR-001", initialAdmin, initialAdmin.split('@')[0], "admin", "ACTIVO", "Sí", "Sí", "Sí", "Sí", "Sí", "Sí"]);
+      var defaultPass = "123456";
+      sheet.appendRow(["USR-001", initialAdmin, defaultPass, initialAdmin.split('@')[0], "admin", "ACTIVO", "Sí", "Sí", "Sí", "Sí", "Sí", "Sí"]);
       return {
         success: true,
         registered: true,
@@ -139,6 +141,7 @@ function getCurrentUserRole(providedEmail) {
     }
 
     var emailColIdx = -1;
+    var passColIdx = -1;
     var roleColIdx = -1;
     var statusColIdx = -1;
 
@@ -147,6 +150,9 @@ function getCurrentUserRole(providedEmail) {
       colMap[h] = c;
       if (emailColIdx === -1 && (h === "correo_electronico" || h === "correo electrónico" || h === "correo electronico" || h === "correo" || h === "email" || h === "mail")) {
         emailColIdx = c;
+      }
+      if (passColIdx === -1 && (h === "clave" || h === "password" || h === "contraseña" || h === "contrasena")) {
+        passColIdx = c;
       }
       if (roleColIdx === -1 && (h === "rol" || h === "role" || h === "perfil")) {
         roleColIdx = c;
@@ -157,8 +163,8 @@ function getCurrentUserRole(providedEmail) {
     }
 
     if (emailColIdx === -1) emailColIdx = 1;
-    if (roleColIdx === -1) roleColIdx = 3;
-    if (statusColIdx === -1) statusColIdx = 4;
+    if (roleColIdx === -1) roleColIdx = 4;
+    if (statusColIdx === -1) statusColIdx = 5;
 
     var foundUser = null;
     var cleanUserEmail = userEmail.replace(/\s+/g, "").toLowerCase();
@@ -169,6 +175,7 @@ function getCurrentUserRole(providedEmail) {
       var rowEmailClean = rowEmailRaw.replace(/\s+/g, "").toLowerCase();
 
       if (rowEmailClean && rowEmailClean === cleanUserEmail) {
+        var savedPass = (passColIdx !== -1 && row[passColIdx] !== undefined && row[passColIdx] !== null) ? row[passColIdx].toString().trim() : "";
         var role = row[roleColIdx] ? row[roleColIdx].toString().trim().toLowerCase() : "view";
         var rawStatus = row[statusColIdx] ? row[statusColIdx].toString().trim().toUpperCase() : "ACTIVO";
         var isA = (role === "admin");
@@ -194,6 +201,7 @@ function getCurrentUserRole(providedEmail) {
 
         foundUser = {
           email: rowEmailClean,
+          savedPass: savedPass,
           role: isA ? "admin" : "view",
           status: rawStatus,
           permissions: perms
@@ -217,6 +225,22 @@ function getCurrentUserRole(providedEmail) {
     var st = foundUser.status;
     var isActive = (st === "" || st === "ACTIVO" || st === "ACTIVE" || st === "SI" || st === "SÍ" || st === "TRUE" || st === "1") &&
                    (st !== "INACTIVO" && st !== "INACTIVE" && st !== "DESACTIVADO" && st !== "NO");
+
+    // Verificar clave si la cuenta tiene clave guardada
+    if (foundUser.savedPass && foundUser.savedPass !== "") {
+      var inputPass = (providedPassword !== undefined && providedPassword !== null) ? providedPassword.toString().trim() : "";
+      if (foundUser.savedPass !== inputPass) {
+        return {
+          success: true,
+          registered: true,
+          active: false,
+          email: foundUser.email,
+          role: "view",
+          permissions: defaultNoPerms,
+          error: "Clave incorrecta. Verifica la contraseña e intenta de nuevo."
+        };
+      }
+    }
 
     return {
       success: true,
@@ -243,8 +267,8 @@ function getCurrentUserRole(providedEmail) {
 /**
  * Helper estricto de validación backend.
  */
-function verificarAccesoUsuario(emailOpcional) {
-  var roleInfo = getCurrentUserRole(emailOpcional);
+function verificarAccesoUsuario(emailOpcional, passOpcional) {
+  var roleInfo = getCurrentUserRole(emailOpcional, passOpcional);
   if (roleInfo && roleInfo.registered && roleInfo.active && roleInfo.email) {
     return {
       autorizado: true,
@@ -305,6 +329,7 @@ function obtenerListaUsuarios() {
         result.push({
           id: userObj.ID || ("USR-" + String(r + 1).padStart(3, '0')),
           email: uEmail,
+          clave: userObj.Clave || userObj.Password || "",
           nombre: userObj.Nombre || (uEmail ? uEmail.split('@')[0] : ""),
           rol: (userObj.Rol || userObj.Role || "view").toLowerCase() === "admin" ? "admin" : "view",
           estado: (userObj.Estado || userObj.Status || "ACTIVO").toUpperCase(),
@@ -330,6 +355,7 @@ function obtenerListaUsuarios() {
 function guardarUsuario(datos) {
   try {
     var email = datos.email || datos.Email || datos.Correo_Electronico || "";
+    var clave = datos.clave || datos.Clave || datos.password || datos.Password || "";
     var nombre = datos.nombre || datos.Nombre || (email ? email.split('@')[0] : "");
     var rol = (datos.rol || datos.Rol || "view").toLowerCase() === "admin" ? "admin" : "view";
     var estado = (datos.estado || datos.Estado || "ACTIVO").toUpperCase();
@@ -382,6 +408,7 @@ function guardarUsuario(datos) {
 
     var rowValuesMap = {
       "Correo_Electronico": email,
+      "Clave": clave,
       "Nombre": nombre,
       "Rol": rol,
       "Estado": estado,

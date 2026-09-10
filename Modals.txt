@@ -244,10 +244,14 @@
                         <span class="text-indigo-600">➕</span> Agregar o Modificar Usuario
                     </h4>
                     <form id="formUsuarioAdmin" onsubmit="handleSaveUserSubmit(event)" class="space-y-4">
-                        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div class="grid grid-cols-1 sm:grid-cols-4 gap-3">
                             <div>
                                 <label class="block text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Correo Electrónico *</label>
                                 <input type="email" id="userFormEmail" required placeholder="correo@ejemplo.com" class="block w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-white py-2 px-3 text-xs font-semibold">
+                            </div>
+                            <div>
+                                <label class="block text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Contraseña / Clave *</label>
+                                <input type="text" id="userFormClave" required placeholder="Clave de acceso" class="block w-full rounded-xl border-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-white py-2 px-3 text-xs font-semibold font-mono">
                             </div>
                             <div>
                                 <label class="block text-[11px] font-bold uppercase text-slate-500 dark:text-slate-400 mb-1">Nombre Usuario</label>

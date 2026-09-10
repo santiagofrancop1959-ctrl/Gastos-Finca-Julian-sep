@@ -2313,6 +2313,12 @@
             event.preventDefault();
             hidePOSAlert();
 
+            if (currentUserRole === 'denied' || isAccessVerified !== true) {
+                showPOSAlert("ACCESO NO VERIFICADO. Debes ingresar con un correo registrado para usar la aplicación.", "error");
+                showAccessBlockedOverlay("");
+                return;
+            }
+
             if (currentUserRole === 'view') {
                 showPOSAlert("Tu perfil de usuario es de SOLO LECTURA. No tienes permisos para registrar o modificar datos.", "error");
                 return;
@@ -5133,7 +5139,7 @@
 
         function get8LotsList() {
             const list = [];
-            for (let i = 1; i <= 11; i++) {
+            for (let i = 1; i <= 6; i++) {
                 list.push(`Lote ${i}`);
             }
             return list;
@@ -5764,52 +5770,89 @@
         }
 
         // --- CONTROL DE ROLES Y PERMISOS DE USUARIO ---
-        let currentUserRole = (typeof google !== 'undefined' && google.script && google.script.run) ? "view" : "admin";
-        let isUserActive = true;
-        let isUserRegistered = true;
+        let currentUserRole = "denied"; // BLOQUEADO por defecto hasta verificar correo registrado
+        let isUserActive = false;
+        let isUserRegistered = false;
+        let isAccessVerified = false; // Solo true cuando el correo fue validado contra la base de datos
 
         function checkCurrentUserRole() {
+            // 1. Recover email: URL param (?email=...) first, then localStorage
             const urlParams = new URLSearchParams(window.location.search);
-            const urlEmail = urlParams.get("email") || "";
-            const savedEmail = urlEmail || localStorage.getItem("finca_user_email") || "";
+            const urlEmail = (urlParams.get("email") || "").trim().toLowerCase();
+            const savedEmail = urlEmail || (localStorage.getItem("finca_user_email") || "").trim().toLowerCase();
 
-            if (savedEmail) {
-                localStorage.setItem("finca_user_email", savedEmail);
+            // 2. HARD BLOCK: if there is NO email at all, demand manual verification
+            if (!savedEmail) {
+                currentUserRole = "denied";
+                isUserRegistered = false;
+                isUserActive = false;
+                isAccessVerified = false;
+                showAccessBlockedOverlay("");
+                return;
             }
 
+            try { localStorage.setItem("finca_user_email", savedEmail); } catch(e){}
+
+            // 3. Production: verify against Google Sheets backend. Any failure = BLOCK
             if (typeof google !== 'undefined' && google.script && google.script.run) {
                 google.script.run
                     .withSuccessHandler(handleCurrentUserRoleSuccess)
                     .withFailureHandler(function(err) {
                         console.warn("Error al verificar rol de usuario:", err);
+                        currentUserRole = "denied";
+                        showAccessBlockedOverlay(savedEmail);
                     })
                     .getCurrentUserRole(savedEmail);
             } else {
-                currentUserRole = "admin";
-                restoreAdminPermissions();
+                // Local simulation mode: only pre-registered emails can enter
+                const allowedLocal = ["danielfrancop@gmail.com", "santiagofrancop1959@gmail.com"];
+                if (allowedLocal.indexOf(savedEmail) !== -1) {
+                    currentUserRole = "admin";
+                    isUserRegistered = true;
+                    isUserActive = true;
+                    isAccessVerified = true;
+                    restoreAdminPermissions();
+                } else {
+                    currentUserRole = "denied";
+                    showAccessBlockedOverlay(savedEmail);
+                }
             }
         }
 
         function handleCurrentUserRoleSuccess(response) {
-            if (!response) return;
+            if (!response) {
+                currentUserRole = "denied";
+                showAccessBlockedOverlay("");
+                return;
+            }
+
+            // HARD GATE: email must be registered AND active in the Usuarios sheet
+            isUserRegistered = response.registered === true;
+            isUserActive = response.active === true;
+
+            if (!isUserRegistered || !isUserActive) {
+                currentUserRole = "denied";
+                isAccessVerified = false;
+                showAccessBlockedOverlay(response.email || "");
+                return;
+            }
 
             currentUserRole = (response.role || "view").toLowerCase();
-            isUserActive = response.active !== false;
-            isUserRegistered = response.registered !== false;
+            isAccessVerified = true;
 
             if (response.email) {
                 try { localStorage.setItem("finca_user_email", response.email); } catch(e){}
             }
 
-            if (!isUserRegistered || !isUserActive) {
-                showAccessBlockedOverlay(response.email || "");
-                return;
-            }
-
             const blockedOverlay = document.getElementById("accessBlockedOverlay");
             if (blockedOverlay) blockedOverlay.classList.add("hidden");
 
-            // Aplicar permisos específicos por módulo si existen en la respuesta
+            const mainEl = document.querySelector("main");
+            if (mainEl) mainEl.classList.remove("hidden");
+            const navHeader = document.querySelector("header");
+            if (navHeader) navHeader.classList.remove("hidden");
+
+            // Apply module-specific permissions if they exist in the backend response
             if (response.permissions) {
                 applyModuleSpecificPermissions(response.permissions, currentUserRole);
             } else {
@@ -5820,6 +5863,7 @@
                     applyViewOnlyPermissions();
                 }
             }
+        
         }
 
         function applyModuleSpecificPermissions(perms, role) {
@@ -5887,40 +5931,69 @@
 
             showLoader(true, "Verificando acceso de usuario...");
 
+            const unblockApp = function() {
+                const blockedOverlay = document.getElementById("accessBlockedOverlay");
+                if (blockedOverlay) blockedOverlay.classList.add("hidden");
+                const mainEl = document.querySelector("main");
+                if (mainEl) mainEl.classList.remove("hidden");
+                const navHeader = document.querySelector("header");
+                if (navHeader) navHeader.classList.remove("hidden");
+                isAccessVerified = true;
+            };
+
+            const blockWithError = function(msg) {
+                currentUserRole = "denied";
+                isUserRegistered = false;
+                isUserActive = false;
+                isAccessVerified = false;
+                if (errorEl) {
+                    errorEl.textContent = msg;
+                    errorEl.classList.remove("hidden");
+                }
+            };
+
             if (typeof google !== 'undefined' && google.script && google.script.run) {
                 google.script.run
                     .withSuccessHandler(function(res) {
                         showLoader(false);
-                        if (res && res.success && res.registered && res.active) {
+                        if (res && res.success === true && res.registered === true && res.active === true) {
                             currentUserRole = (res.role || "view").toLowerCase();
+                            isUserRegistered = true;
+                            isUserActive = true;
                             try { localStorage.setItem("finca_user_email", email); } catch(e){}
 
-                            const blockedOverlay = document.getElementById("accessBlockedOverlay");
-                            if (blockedOverlay) blockedOverlay.classList.add("hidden");
+                            unblockApp();
 
-                            if (currentUserRole === "admin") {
+                            if (res.permissions) {
+                                applyModuleSpecificPermissions(res.permissions, currentUserRole);
+                            } else if (currentUserRole === "admin") {
                                 restoreAdminPermissions();
                             } else {
+                                currentUserRole = "view";
                                 applyViewOnlyPermissions();
                             }
                         } else {
-                            if (errorEl) {
-                                errorEl.textContent = `El correo ${email} no está registrado o se encuentra inactivo.`;
-                                errorEl.classList.remove("hidden");
-                            }
+                            blockWithError("El correo " + email + " no está registrado o se encuentra inactivo. El acceso está bloqueado.");
                         }
                     })
                     .withFailureHandler(function(err) {
                         showLoader(false);
-                        if (errorEl) {
-                            errorEl.textContent = "Error de conexión: " + err.toString();
-                            errorEl.classList.remove("hidden");
-                        }
+                        blockWithError("Error de conexión al verificar el correo: " + err.toString());
                     })
                     .getCurrentUserRole(email);
             } else {
                 showLoader(false);
-                alert("Modo local simulado.");
+                const allowedLocal = ["danielfrancop@gmail.com", "santiagofrancop1959@gmail.com"];
+                if (allowedLocal.indexOf(email) !== -1) {
+                    currentUserRole = "admin";
+                    isUserRegistered = true;
+                    isUserActive = true;
+                    try { localStorage.setItem("finca_user_email", email); } catch(e){}
+                    unblockApp();
+                    restoreAdminPermissions();
+                } else {
+                    blockWithError("Correo no registrado en la base de datos de la app (modo local).");
+                }
             }
         }
 
@@ -6207,16 +6280,25 @@
         }
 
         function showAccessBlockedOverlay(email) {
+            // FAIL-CLOSED: any time this screen appears, access is denied
+            currentUserRole = "denied";
+            isAccessVerified = false;
+
             let blockedOverlay = document.getElementById("accessBlockedOverlay");
             const displayEmail = email || "";
             const msgHtml = displayEmail ?
                 `El correo <strong class="text-slate-800 dark:text-slate-200">${displayEmail}</strong> no se encuentra registrado o se encuentra inactivo.` :
                 `No se pudo verificar automáticamente tu cuenta de Google (correo no compartido por el navegador).`;
 
+            const mainEl = document.querySelector("main");
+            if (mainEl) mainEl.classList.add("hidden");
+            const navHeader = document.querySelector("header");
+            if (navHeader) navHeader.classList.add("hidden");
+
             if (!blockedOverlay) {
                 blockedOverlay = document.createElement("div");
                 blockedOverlay.id = "accessBlockedOverlay";
-                blockedOverlay.className = "fixed inset-0 bg-slate-950/90 backdrop-blur-md z-[100] flex flex-col justify-center items-center p-6 text-center text-white";
+                blockedOverlay.className = "fixed inset-0 bg-slate-950/95 backdrop-blur-md z-[100] flex flex-col justify-center items-center p-6 text-center text-white";
                 blockedOverlay.innerHTML = `
                     <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-8 rounded-3xl max-w-md w-full shadow-2xl text-slate-800 dark:text-white space-y-4">
                         <div class="p-3 bg-rose-100 text-rose-600 rounded-2xl w-14 h-14 mx-auto flex items-center justify-center">
